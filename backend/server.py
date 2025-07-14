@@ -20,8 +20,8 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -80,6 +80,18 @@ class RecipeCreate(BaseModel):
     carbs: float
     fat: float
     servings: int
+
+class ProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    goal: Optional[str] = None
+    daily_calorie_goal: Optional[int] = None
+    daily_protein_goal: Optional[int] = None
+    daily_carbs_goal: Optional[int] = None
+    daily_fat_goal: Optional[int] = None
+    bio: Optional[str] = None
+
+class CommentCreate(BaseModel):
+    content: str
 
 # Helper functions
 def hash_password(password: str) -> str:
@@ -188,9 +200,136 @@ async def analyze_meal_with_ai(image_data: str, meal_name: str = None) -> dict:
             "protein": 20.0,
             "carbs": 30.0,
             "fat": 15.0,
-            "ingredients": "Could not analyze ingredients",
-            "confidence": 1
+"ingredients": "Could not analyze ingredients",
+        "confidence": 1
+    }
+
+# Profile endpoints
+@app.get("/api/profile/{user_id}")
+async def get_user_profile(user_id: str, current_user: dict = Depends(get_current_user)):
+    """Get user profile by ID"""
+    user = users_collection.find_one({"user_id": user_id}, {"password": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Get user's recent posts
+    recent_posts = list(posts_collection.find(
+        {"user_id": user_id},
+        {"_id": 0}
+    ).sort("created_at", -1).limit(10))
+    
+    # Get user's meal history summary
+    recent_meals = list(meals_collection.find(
+        {"user_id": user_id},
+        {"_id": 0}
+    ).sort("created_at", -1).limit(5))
+    
+    return {
+        "user_id": user['user_id'],
+        "name": user['name'],
+        "email": user['email'],
+        "goal": user['goal'],
+        "bio": user.get('bio', ''),
+        "followers": len(user.get('followers', [])),
+        "following": len(user.get('following', [])),
+        "posts_count": user.get('posts_count', 0),
+        "current_streak": user.get('current_streak', 0),
+        "longest_streak": user.get('longest_streak', 0),
+        "created_at": user['created_at'],
+        "recent_posts": recent_posts,
+        "recent_meals": recent_meals,
+        "is_following": user_id in current_user.get('following', []),
+        "daily_goals": {
+            "calories": user.get('daily_calorie_goal', 2000),
+            "protein": user.get('daily_protein_goal', 150),
+            "carbs": user.get('daily_carbs_goal', 250),
+            "fat": user.get('daily_fat_goal', 70)
         }
+    }
+
+@app.put("/api/profile")
+async def update_profile(profile_data: ProfileUpdate, current_user: dict = Depends(get_current_user)):
+    """Update user profile"""
+    update_data = {k: v for k, v in profile_data.dict().items() if v is not None}
+    
+    if update_data:
+        users_collection.update_one(
+            {"user_id": current_user['user_id']},
+            {"$set": update_data}
+        )
+    
+    return {"message": "Profile updated successfully"}
+
+@app.post("/api/profile/follow/{user_id}")
+async def follow_user(user_id: str, current_user: dict = Depends(get_current_user)):
+    """Follow or unfollow a user"""
+    if user_id == current_user['user_id']:
+        raise HTTPException(status_code=400, detail="Cannot follow yourself")
+    
+    target_user = users_collection.find_one({"user_id": user_id})
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    current_following = current_user.get('following', [])
+    
+    if user_id in current_following:
+        # Unfollow
+        users_collection.update_one(
+            {"user_id": current_user['user_id']},
+            {"$pull": {"following": user_id}}
+        )
+        users_collection.update_one(
+            {"user_id": user_id},
+            {"$pull": {"followers": current_user['user_id']}}
+        )
+        return {"message": "User unfollowed", "is_following": False}
+    else:
+        # Follow
+        users_collection.update_one(
+            {"user_id": current_user['user_id']},
+            {"$push": {"following": user_id}}
+        )
+        users_collection.update_one(
+            {"user_id": user_id},
+            {"$push": {"followers": current_user['user_id']}}
+        )
+        return {"message": "User followed", "is_following": True}
+
+@app.get("/api/profile/followers/{user_id}")
+async def get_followers(user_id: str, current_user: dict = Depends(get_current_user)):
+    """Get user's followers"""
+    user = users_collection.find_one({"user_id": user_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    followers = []
+    for follower_id in user.get('followers', []):
+        follower = users_collection.find_one(
+            {"user_id": follower_id},
+            {"user_id": 1, "name": 1, "goal": 1}
+        )
+        if follower:
+            followers.append(follower)
+    
+    return {"followers": followers}
+
+@app.get("/api/profile/following/{user_id}")
+async def get_following(user_id: str, current_user: dict = Depends(get_current_user)):
+    """Get users that this user is following"""
+    user = users_collection.find_one({"user_id": user_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    following = []
+    for following_id in user.get('following', []):
+        following_user = users_collection.find_one(
+            {"user_id": following_id},
+            {"user_id": 1, "name": 1, "goal": 1}
+        )
+        if following_user:
+            following.append(following_user)
+    
+    return {"following": following}
 
 # Authentication endpoints
 @app.post("/api/auth/signup")
@@ -384,12 +523,75 @@ async def create_post(post: PostCreate, current_user: dict = Depends(get_current
 
 @app.get("/api/posts/feed")
 async def get_feed(current_user: dict = Depends(get_current_user)):
+    """Get personalized feed based on following"""
+    following = current_user.get('following', [])
+    
+    # Include own posts and posts from followed users
+    user_ids = following + [current_user['user_id']]
+    
+    posts = list(posts_collection.find(
+        {"user_id": {"$in": user_ids}} if user_ids else {},
+        {"_id": 0}
+    ).sort("created_at", -1).limit(20))
+    
+    # If no personalized posts, show global feed
+    if not posts:
+        posts = list(posts_collection.find(
+            {},
+            {"_id": 0}
+        ).sort("created_at", -1).limit(20))
+    
+    return {"posts": posts}
+
+@app.get("/api/posts/discover")
+async def get_discover_feed(current_user: dict = Depends(get_current_user)):
+    """Get discover feed with all posts"""
     posts = list(posts_collection.find(
         {},
+        {"_id": 0}
+    ).sort("created_at", -1).limit(50))
+    
+    return {"posts": posts}
+
+@app.get("/api/posts/user/{user_id}")
+async def get_user_posts(user_id: str, current_user: dict = Depends(get_current_user)):
+    """Get posts from a specific user"""
+    posts = list(posts_collection.find(
+        {"user_id": user_id},
         {"_id": 0}
     ).sort("created_at", -1).limit(20))
     
     return {"posts": posts}
+
+@app.post("/api/posts/share-meal/{meal_id}")
+async def share_meal_as_post(meal_id: str, current_user: dict = Depends(get_current_user)):
+    """Share a meal as a post"""
+    meal = meals_collection.find_one({"meal_id": meal_id, "user_id": current_user['user_id']})
+    if not meal:
+        raise HTTPException(status_code=404, detail="Meal not found")
+    
+    post_id = str(uuid.uuid4())
+    post_doc = {
+        "post_id": post_id,
+        "user_id": current_user['user_id'],
+        "author_name": current_user['name'],
+        "content": f"Just had {meal['name']}! 🍽️\n\n📊 Nutrition:\n• {meal.get('calories', 0)} calories\n• {meal.get('protein', 0)}g protein\n• {meal.get('carbs', 0)}g carbs\n• {meal.get('fat', 0)}g fat",
+        "image_url": None,
+        "meal_id": meal_id,
+        "likes": [],
+        "comments": [],
+        "created_at": datetime.utcnow()
+    }
+    
+    posts_collection.insert_one(post_doc)
+    
+    # Update user posts count
+    users_collection.update_one(
+        {"user_id": current_user['user_id']},
+        {"$inc": {"posts_count": 1}}
+    )
+    
+    return {"post_id": post_id, "message": "Meal shared successfully"}
 
 @app.post("/api/posts/{post_id}/like")
 async def like_post(post_id: str, current_user: dict = Depends(get_current_user)):
@@ -414,6 +616,50 @@ async def like_post(post_id: str, current_user: dict = Depends(get_current_user)
             {"$push": {"likes": user_id}}
         )
         return {"message": "Post liked"}
+
+@app.post("/api/posts/{post_id}/comment")
+async def comment_on_post(post_id: str, comment: CommentCreate, current_user: dict = Depends(get_current_user)):
+    """Add a comment to a post"""
+    post = posts_collection.find_one({"post_id": post_id})
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    
+    comment_doc = {
+        "comment_id": str(uuid.uuid4()),
+        "user_id": current_user['user_id'],
+        "author_name": current_user['name'],
+        "content": comment.content,
+        "created_at": datetime.utcnow()
+    }
+    
+    posts_collection.update_one(
+        {"post_id": post_id},
+        {"$push": {"comments": comment_doc}}
+    )
+    
+    return {"message": "Comment added successfully"}
+
+@app.get("/api/posts/{post_id}/comments")
+async def get_post_comments(post_id: str, current_user: dict = Depends(get_current_user)):
+    """Get comments for a specific post"""
+    post = posts_collection.find_one({"post_id": post_id})
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    
+    comments = post.get('comments', [])
+    return {"comments": comments}
+
+@app.post("/api/posts/{post_id}/upload-image")
+async def upload_post_image(post_id: str, file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
+    """Upload an image for a post"""
+    if not file.content_type.startswith('image/'):
+        raise HTTPException(status_code=400, detail="File must be an image")
+    
+    # For now, we'll just return a dummy URL
+    # In production, you'd upload to a service like AWS S3 or similar
+    image_url = f"https://api.eatflex.com/images/{post_id}_{file.filename}"
+    
+    return {"image_url": image_url}
 
 # Health check
 @app.get("/api/health")

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import './App.css';
 
-const API_BASE_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
+const API_BASE_URL = process.env.REACT_APP_BACKEND_URL || 'http://127.0.0.1:8001';
 
 function App() {
   const [user, setUser] = useState(null);
@@ -12,6 +12,21 @@ function App() {
   const [dailyGoals, setDailyGoals] = useState({});
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(false);
+  
+  // New social features states
+  const [newPost, setNewPost] = useState({ content: '', image: null });
+  const [showComments, setShowComments] = useState({});
+  const [newComment, setNewComment] = useState({});
+  const [profileEdit, setProfileEdit] = useState({
+    name: '',
+    bio: '',
+    goal: '',
+    daily_calorie_goal: '',
+    daily_protein_goal: '',
+    daily_carbs_goal: '',
+    daily_fat_goal: ''
+  });
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
 
   // Auth states
   const [authMode, setAuthMode] = useState('login');
@@ -106,16 +121,35 @@ function App() {
     
     try {
       const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/signup';
-      const data = await apiCall(endpoint, {
+      console.log('Making request to:', `${API_BASE_URL}${endpoint}`);
+      console.log('Request body:', authForm);
+      
+      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
         method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify(authForm)
       });
+      
+      console.log('Response status:', response.status);
+      console.log('Response headers:', response.headers);
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Response error:', errorText);
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      }
+      
+      const data = await response.json();
+      console.log('Response data:', data);
       
       setToken(data.token);
       localStorage.setItem('token', data.token);
       setUser(data.user);
       setAuthForm({ email: '', password: '', name: '', goal: 'maintenance' });
     } catch (error) {
+      console.error('Auth error:', error);
       alert(`${authMode === 'login' ? 'Login' : 'Signup'} failed: ${error.message}`);
     } finally {
       setLoading(false);
@@ -194,6 +228,112 @@ function App() {
     } catch (error) {
       console.error('Failed to like post:', error);
     }
+  };
+
+  const handleCreatePost = async (e) => {
+    e.preventDefault();
+    if (!newPost.content.trim()) return;
+    
+    setLoading(true);
+    try {
+      let imageUrl = null;
+      
+      // Upload image if provided
+      if (newPost.image) {
+        const formData = new FormData();
+        formData.append('file', newPost.image);
+        
+        const response = await fetch(`${API_BASE_URL}/api/posts/temp/upload-image`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`
+          },
+          body: formData
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          imageUrl = data.image_url;
+        }
+      }
+      
+      await apiCall('/api/posts/create', {
+        method: 'POST',
+        body: JSON.stringify({
+          content: newPost.content,
+          image_url: imageUrl
+        })
+      });
+      
+      setNewPost({ content: '', image: null });
+      loadFeed();
+      alert('Post created successfully!');
+    } catch (error) {
+      alert(`Failed to create post: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleComment = async (postId, commentContent) => {
+    if (!commentContent.trim()) return;
+    
+    try {
+      await apiCall(`/api/posts/${postId}/comment`, {
+        method: 'POST',
+        body: JSON.stringify({ content: commentContent })
+      });
+      
+      setNewComment({ ...newComment, [postId]: '' });
+      loadFeed();
+    } catch (error) {
+      console.error('Failed to add comment:', error);
+    }
+  };
+
+  const handleProfileUpdate = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    
+    try {
+      const updateData = {};
+      Object.keys(profileEdit).forEach(key => {
+        if (profileEdit[key] && profileEdit[key] !== user[key]) {
+          updateData[key] = profileEdit[key];
+        }
+      });
+      
+      if (Object.keys(updateData).length > 0) {
+        await apiCall('/api/profile', {
+          method: 'PUT',
+          body: JSON.stringify(updateData)
+        });
+        
+        // Update local user state
+        setUser({ ...user, ...updateData });
+        alert('Profile updated successfully!');
+      }
+      
+      setIsEditingProfile(false);
+    } catch (error) {
+      alert(`Failed to update profile: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleShareMeal = async (mealId) => {
+    try {
+      await apiCall(`/api/posts/share-meal/${mealId}`, { method: 'POST' });
+      alert('Meal shared to feed!');
+      loadFeed();
+    } catch (error) {
+      console.error('Failed to share meal:', error);
+    }
+  };
+
+  const toggleComments = (postId) => {
+    setShowComments(prev => ({ ...prev, [postId]: !prev[postId] }));
   };
 
   const MacroBar = ({ label, current, goal, color }) => {
@@ -280,6 +420,25 @@ function App() {
             
             <button type="submit" disabled={loading} className="auth-button">
               {loading ? 'Processing...' : (authMode === 'login' ? 'Login' : 'Sign Up')}
+            </button>
+            <button 
+              type="button" 
+              onClick={async () => {
+                console.log('Direct test button clicked');
+                try {
+                  const response = await fetch('http://127.0.0.1:8001/api/health');
+                  const data = await response.json();
+                  console.log('Health check success:', data);
+                  alert('Health check success: ' + JSON.stringify(data));
+                } catch (error) {
+                  console.error('Health check failed:', error);
+                  alert('Health check failed: ' + error.message);
+                }
+              }}
+              className="auth-button"
+              style={{marginTop: '10px', backgroundColor: '#007bff'}}
+            >
+              Test API Connection
             </button>
           </form>
         </div>
@@ -460,6 +619,12 @@ function App() {
                       {meal.ingredients && (
                         <p className="meal-ingredients">{meal.ingredients}</p>
                       )}
+                      <button 
+                        onClick={() => handleShareMeal(meal.meal_id)}
+                        className="share-meal-button"
+                      >
+                        📤 Share
+                      </button>
                     </div>
                   ))
                 )}
@@ -471,6 +636,37 @@ function App() {
         {activeTab === 'feed' && (
           <div className="feed-section">
             <h2>Social Feed</h2>
+            
+            {/* Post Creation Form */}
+            <div className="create-post-section">
+              <h3>Share Your Experience</h3>
+              <form onSubmit={handleCreatePost} className="create-post-form">
+                <textarea
+                  placeholder="What's on your mind? Share your meal, workout, or progress!"
+                  value={newPost.content}
+                  onChange={(e) => setNewPost({...newPost, content: e.target.value})}
+                  rows="3"
+                  className="post-content-input"
+                />
+                <div className="post-actions-row">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => setNewPost({...newPost, image: e.target.files[0]})}
+                    id="post-image-upload"
+                    style={{ display: 'none' }}
+                  />
+                  <label htmlFor="post-image-upload" className="image-upload-label">
+                    📷 {newPost.image ? 'Image selected' : 'Add Photo'}
+                  </label>
+                  <button type="submit" disabled={loading || !newPost.content.trim()} className="post-submit-button">
+                    {loading ? 'Posting...' : '📝 Post'}
+                  </button>
+                </div>
+              </form>
+            </div>
+            
+            {/* Posts Feed */}
             <div className="posts-container">
               {posts.length === 0 ? (
                 <p className="no-posts">No posts yet. Be the first to share your meal!</p>
@@ -496,10 +692,49 @@ function App() {
                       >
                         💪 {post.likes?.length || 0}
                       </button>
-                      <button className="comment-button">
+                      <button 
+                        onClick={() => toggleComments(post.post_id)}
+                        className="comment-button"
+                      >
                         💬 {post.comments?.length || 0}
                       </button>
                     </div>
+                    
+                    {/* Comments Section */}
+                    {showComments[post.post_id] && (
+                      <div className="comments-section">
+                        <div className="comments-list">
+                          {post.comments?.map((comment, commentIndex) => (
+                            <div key={commentIndex} className="comment">
+                              <strong>{comment.author_name}:</strong> {comment.content}
+                              <span className="comment-time">
+                                {new Date(comment.created_at).toLocaleTimeString()}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="add-comment">
+                          <input
+                            type="text"
+                            placeholder="Add a comment..."
+                            value={newComment[post.post_id] || ''}
+                            onChange={(e) => setNewComment({...newComment, [post.post_id]: e.target.value})}
+                            onKeyPress={(e) => {
+                              if (e.key === 'Enter') {
+                                handleComment(post.post_id, newComment[post.post_id]);
+                              }
+                            }}
+                            className="comment-input"
+                          />
+                          <button 
+                            onClick={() => handleComment(post.post_id, newComment[post.post_id])}
+                            className="comment-submit-button"
+                          >
+                            📩
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))
               )}
@@ -513,6 +748,7 @@ function App() {
             <div className="profile-card">
               <h3>{user.name}</h3>
               <p className="profile-goal">Goal: {user.goal}</p>
+              {user.bio && <p className="profile-bio">{user.bio}</p>}
               <div className="profile-stats">
                 <div className="stat">
                   <span className="stat-number">{user.posts_count || 0}</span>
@@ -532,6 +768,98 @@ function App() {
                 </div>
               </div>
             </div>
+            
+            {/* Profile Edit Button */}
+            <div className="profile-actions">
+              <button 
+                className="edit-profile-button"
+                onClick={() => {
+                  setIsEditingProfile(true);
+                  setProfileEdit({
+                    name: user.name || '',
+                    bio: user.bio || '',
+                    goal: user.goal || '',
+                    daily_calorie_goal: user.daily_calorie_goal || '',
+                    daily_protein_goal: user.daily_protein_goal || '',
+                    daily_carbs_goal: user.daily_carbs_goal || '',
+                    daily_fat_goal: user.daily_fat_goal || ''
+                  });
+                }}
+              >
+                ✏️ Edit Profile
+              </button>
+            </div>
+            
+            {/* Profile Edit Form */}
+            {isEditingProfile && (
+              <div className="profile-edit-card">
+                <h3>Edit Profile</h3>
+                <form onSubmit={handleProfileUpdate} className="profile-edit-form">
+                  <input
+                    type="text"
+                    placeholder="Full Name"
+                    value={profileEdit.name}
+                    onChange={(e) => setProfileEdit({...profileEdit, name: e.target.value})}
+                    required
+                  />
+                  <textarea
+                    placeholder="Bio (optional)"
+                    value={profileEdit.bio}
+                    onChange={(e) => setProfileEdit({...profileEdit, bio: e.target.value})}
+                    rows="3"
+                  />
+                  <select
+                    value={profileEdit.goal}
+                    onChange={(e) => setProfileEdit({...profileEdit, goal: e.target.value})}
+                  >
+                    <option value="bulking">Bulking</option>
+                    <option value="cutting">Cutting</option>
+                    <option value="maintenance">Maintenance</option>
+                  </select>
+                  
+                  <h4>Daily Goals</h4>
+                  <div className="goals-grid">
+                    <input
+                      type="number"
+                      placeholder="Calorie Goal"
+                      value={profileEdit.daily_calorie_goal}
+                      onChange={(e) => setProfileEdit({...profileEdit, daily_calorie_goal: e.target.value})}
+                    />
+                    <input
+                      type="number"
+                      placeholder="Protein Goal (g)"
+                      value={profileEdit.daily_protein_goal}
+                      onChange={(e) => setProfileEdit({...profileEdit, daily_protein_goal: e.target.value})}
+                    />
+                    <input
+                      type="number"
+                      placeholder="Carbs Goal (g)"
+                      value={profileEdit.daily_carbs_goal}
+                      onChange={(e) => setProfileEdit({...profileEdit, daily_carbs_goal: e.target.value})}
+                    />
+                    <input
+                      type="number"
+                      placeholder="Fat Goal (g)"
+                      value={profileEdit.daily_fat_goal}
+                      onChange={(e) => setProfileEdit({...profileEdit, daily_fat_goal: e.target.value})}
+                    />
+                  </div>
+                  
+                  <div className="profile-edit-actions">
+                    <button type="submit" disabled={loading} className="update-button">
+                      {loading ? 'Updating...' : '💾 Update Profile'}
+                    </button>
+                    <button 
+                      type="button" 
+                      className="cancel-button" 
+                      onClick={() => setIsEditingProfile(false)}
+                    >
+                      ❌ Cancel
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
           </div>
         )}
       </main>

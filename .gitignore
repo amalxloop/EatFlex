@@ -77,4 +77,19 @@ agenthub/agents/youtube/db
 .cache/
 
 # Mobile development
-android-sdk/ 
+android-sdk/
+
+# EatFlex specific
+*.log
+frontend/test-api.html
+backend/server.log
+frontend/frontend.log
+frontend/build/
+frontend/package-lock.json
+backend/myenv/
+
+# Environment files
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
