@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pymongo import MongoClient
 from pydantic import BaseModel
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 import os
 import uuid
 import jwt
@@ -17,9 +17,16 @@ import json
 app = FastAPI()
 
 # CORS configuration
+allowed_origins = [
+    "http://localhost:3000",
+    "https://eatflex-frontend.onrender.com",
+    "https://eatflex.onrender.com",
+    "*"  # Remove this in production for security
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
@@ -41,7 +48,7 @@ streaks_collection = db['streaks']
 JWT_SECRET = os.environ.get('JWT_SECRET', 'eatflex-secret-key')
 
 # OpenRouter API configuration
-OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY', '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')
+OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY')
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 security = HTTPBearer()
@@ -93,6 +100,12 @@ class ProfileUpdate(BaseModel):
 class CommentCreate(BaseModel):
     content: str
 
+class PostUpdate(BaseModel):
+    content: str
+
+class CommentUpdate(BaseModel):
+    content: str
+
 # Helper functions
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
@@ -103,7 +116,7 @@ def verify_password(password: str, hashed: str) -> bool:
 def create_jwt_token(user_id: str) -> str:
     payload = {
         'user_id': user_id,
-        'exp': datetime.utcnow() + timedelta(days=7)
+        'exp': datetime.now(UTC) + timedelta(days=7)
     }
     return jwt.encode(payload, JWT_SECRET, algorithm='HS256')
 
@@ -200,9 +213,9 @@ async def analyze_meal_with_ai(image_data: str, meal_name: str = None) -> dict:
             "protein": 20.0,
             "carbs": 30.0,
             "fat": 15.0,
-"ingredients": "Could not analyze ingredients",
-        "confidence": 1
-    }
+            "ingredients": "Could not analyze ingredients",
+            "confidence": 1
+        }
 
 # Profile endpoints
 @app.get("/api/profile/{user_id}")
@@ -348,7 +361,7 @@ async def signup(user: UserSignup):
         "name": user.name,
         "password": hashed_password,
         "goal": user.goal,
-        "created_at": datetime.utcnow(),
+        "created_at": datetime.now(UTC),
         "followers": [],
         "following": [],
         "posts_count": 0,
@@ -412,8 +425,8 @@ async def log_meal(meal: MealLog, current_user: dict = Depends(get_current_user)
         "protein": meal.protein,
         "carbs": meal.carbs,
         "fat": meal.fat,
-        "created_at": datetime.utcnow(),
-        "date": datetime.utcnow().strftime("%Y-%m-%d")
+        "created_at": datetime.now(UTC),
+        "date": datetime.now(UTC).strftime("%Y-%m-%d")
     }
     
     meals_collection.insert_one(meal_doc)
@@ -443,8 +456,8 @@ async def analyze_meal_photo(file: UploadFile = File(...), current_user: dict = 
         "carbs": analysis.get('carbs', 0),
         "fat": analysis.get('fat', 0),
         "confidence": analysis.get('confidence', 5),
-        "created_at": datetime.utcnow(),
-        "date": datetime.utcnow().strftime("%Y-%m-%d"),
+        "created_at": datetime.now(UTC),
+        "date": datetime.now(UTC).strftime("%Y-%m-%d"),
         "analyzed_by_ai": True
     }
     
@@ -458,7 +471,7 @@ async def analyze_meal_photo(file: UploadFile = File(...), current_user: dict = 
 
 @app.get("/api/meals/today")
 async def get_today_meals(current_user: dict = Depends(get_current_user)):
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
     meals = list(meals_collection.find(
         {"user_id": current_user['user_id'], "date": today},
         {"_id": 0}
@@ -508,7 +521,7 @@ async def create_post(post: PostCreate, current_user: dict = Depends(get_current
         "meal_id": post.meal_id,
         "likes": [],
         "comments": [],
-        "created_at": datetime.utcnow()
+        "created_at": datetime.now(UTC)
     }
     
     posts_collection.insert_one(post_doc)
@@ -580,7 +593,7 @@ async def share_meal_as_post(meal_id: str, current_user: dict = Depends(get_curr
         "meal_id": meal_id,
         "likes": [],
         "comments": [],
-        "created_at": datetime.utcnow()
+        "created_at": datetime.now(UTC)
     }
     
     posts_collection.insert_one(post_doc)
@@ -629,7 +642,7 @@ async def comment_on_post(post_id: str, comment: CommentCreate, current_user: di
         "user_id": current_user['user_id'],
         "author_name": current_user['name'],
         "content": comment.content,
-        "created_at": datetime.utcnow()
+        "created_at": datetime.now(UTC)
     }
     
     posts_collection.update_one(
@@ -649,23 +662,116 @@ async def get_post_comments(post_id: str, current_user: dict = Depends(get_curre
     comments = post.get('comments', [])
     return {"comments": comments}
 
-@app.post("/api/posts/{post_id}/upload-image")
-async def upload_post_image(post_id: str, file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
-    """Upload an image for a post"""
+@app.post("/api/posts/temp/upload-image")
+async def upload_temp_image(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
+    """Upload a temporary image for posts"""
     if not file.content_type.startswith('image/'):
         raise HTTPException(status_code=400, detail="File must be an image")
     
-    # For now, we'll just return a dummy URL
-    # In production, you'd upload to a service like AWS S3 or similar
-    image_url = f"https://api.eatflex.com/images/{post_id}_{file.filename}"
+    # Create a unique filename
+    import base64
+    import os
+    
+    # Read file content
+    file_content = await file.read()
+    
+    # Convert to base64 for storage (in production, use cloud storage)
+    encoded_image = base64.b64encode(file_content).decode('utf-8')
+    
+    # Create data URL for immediate use
+    image_url = f"data:{file.content_type};base64,{encoded_image}"
     
     return {"image_url": image_url}
+
+@app.put("/api/posts/{post_id}")
+async def update_post(post_id: str, post_update: PostUpdate, current_user: dict = Depends(get_current_user)):
+    """Update a post"""
+    post = posts_collection.find_one({"post_id": post_id, "user_id": current_user['user_id']})
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found or you don't have permission")
+    
+    posts_collection.update_one(
+        {"post_id": post_id},
+        {"$set": {"content": post_update.content, "updated_at": datetime.now(UTC)}}
+    )
+    
+    return {"message": "Post updated successfully"}
+
+@app.delete("/api/posts/{post_id}")
+async def delete_post(post_id: str, current_user: dict = Depends(get_current_user)):
+    """Delete a post"""
+    post = posts_collection.find_one({"post_id": post_id, "user_id": current_user['user_id']})
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found or you don't have permission")
+    
+    posts_collection.delete_one({"post_id": post_id})
+    
+    # Update user posts count
+    users_collection.update_one(
+        {"user_id": current_user['user_id']},
+        {"$inc": {"posts_count": -1}}
+    )
+    
+    return {"message": "Post deleted successfully"}
+
+@app.put("/api/posts/{post_id}/comments/{comment_id}")
+async def update_comment(post_id: str, comment_id: str, comment_update: CommentUpdate, current_user: dict = Depends(get_current_user)):
+    """Update a comment"""
+    post = posts_collection.find_one({"post_id": post_id})
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    
+    # Check if user owns the comment
+    comment_found = False
+    for comment in post.get('comments', []):
+        if comment['comment_id'] == comment_id and comment['user_id'] == current_user['user_id']:
+            comment_found = True
+            break
+    
+    if not comment_found:
+        raise HTTPException(status_code=404, detail="Comment not found or you don't have permission")
+    
+    posts_collection.update_one(
+        {"post_id": post_id, "comments.comment_id": comment_id},
+        {"$set": {"comments.$.content": comment_update.content, "comments.$.updated_at": datetime.now(UTC)}}
+    )
+    
+    return {"message": "Comment updated successfully"}
+
+@app.delete("/api/posts/{post_id}/comments/{comment_id}")
+async def delete_comment(post_id: str, comment_id: str, current_user: dict = Depends(get_current_user)):
+    """Delete a comment"""
+    post = posts_collection.find_one({"post_id": post_id})
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    
+    # Check if user owns the comment
+    comment_found = False
+    for comment in post.get('comments', []):
+        if comment['comment_id'] == comment_id and comment['user_id'] == current_user['user_id']:
+            comment_found = True
+            break
+    
+    if not comment_found:
+        raise HTTPException(status_code=404, detail="Comment not found or you don't have permission")
+    
+    posts_collection.update_one(
+        {"post_id": post_id},
+        {"$pull": {"comments": {"comment_id": comment_id}}}
+    )
+    
+    return {"message": "Comment deleted successfully"}
 
 # Health check
 @app.get("/api/health")
 async def health_check():
     return {"status": "healthy", "app": "EatFlex API"}
 
+@app.get("/")
+async def root():
+    return {"message": "Welcome to the EatFlex API"}
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    port = int(os.environ.get('PORT', 8001))
+    uvicorn.run(app, host="0.0.0.0", port=port)

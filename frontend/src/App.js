@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import { toast, ToastContainer } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
 import './App.css';
 
-const API_BASE_URL = process.env.REACT_APP_BACKEND_URL || 'http://127.0.0.1:8001';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8001';
 
 function App() {
   const [user, setUser] = useState(null);
@@ -12,11 +14,14 @@ function App() {
   const [dailyGoals, setDailyGoals] = useState({});
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [selectedImage, setSelectedImage] = useState(null);
   
   // New social features states
   const [newPost, setNewPost] = useState({ content: '', image: null });
   const [showComments, setShowComments] = useState({});
   const [newComment, setNewComment] = useState({});
+  const [editingPost, setEditingPost] = useState({});
+  const [editingComment, setEditingComment] = useState({});
   const [profileEdit, setProfileEdit] = useState({
     name: '',
     bio: '',
@@ -291,6 +296,66 @@ function App() {
     }
   };
 
+  const handleEditPost = async (postId, newContent) => {
+    if (!newContent.trim()) return;
+    
+    try {
+      await apiCall(`/api/posts/${postId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ content: newContent })
+      });
+      
+      setEditingPost({ ...editingPost, [postId]: false });
+      loadFeed();
+    } catch (error) {
+      console.error('Failed to edit post:', error);
+    }
+  };
+
+  const handleDeletePost = async (postId) => {
+    if (!window.confirm('Are you sure you want to delete this post?')) return;
+    
+    try {
+      await apiCall(`/api/posts/${postId}`, {
+        method: 'DELETE'
+      });
+      
+      loadFeed();
+    } catch (error) {
+      console.error('Failed to delete post:', error);
+    }
+  };
+
+  const handleEditComment = async (postId, commentId, newContent) => {
+    if (!newContent.trim()) return;
+    
+    try {
+      await apiCall(`/api/posts/${postId}/comments/${commentId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ content: newContent })
+      });
+      
+      setEditingComment({ ...editingComment, [commentId]: false });
+      loadFeed();
+    } catch (error) {
+      console.error('Failed to edit comment:', error);
+    }
+  };
+
+  const handleDeleteComment = async (postId, commentId) => {
+    if (!window.confirm('Are you sure you want to delete this comment?')) return;
+    
+    try {
+      await apiCall(`/api/posts/${postId}/comments/${commentId}`, {
+        method: 'DELETE'
+      });
+      
+      loadFeed();
+    } catch (error) {
+      console.error('Failed to delete comment:', error);
+    }
+  };
+
   const handleProfileUpdate = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -336,6 +401,22 @@ function App() {
     setShowComments(prev => ({ ...prev, [postId]: !prev[postId] }));
   };
 
+  // Image Modal Component
+  const ImageModal = ({ imageUrl, onClose }) => {
+    if (!imageUrl) return null;
+    
+    return (
+      <div className="image-modal-overlay" onClick={onClose}>
+        <div className="image-modal-content" onClick={(e) => e.stopPropagation()}>
+          <button className="image-modal-close" onClick={onClose}>
+            ✕
+          </button>
+          <img src={imageUrl} alt="Full size" className="image-modal-img" />
+        </div>
+      </div>
+    );
+  };
+
   const MacroBar = ({ label, current, goal, color }) => {
     const percentage = goal > 0 ? Math.min((current / goal) * 100, 100) : 0;
     
@@ -358,7 +439,7 @@ function App() {
   // Auth Screen
   if (!user) {
     return (
-      <div className="app">
+      <div className="min-h-screen bg-gray-100 flex flex-col">
         <div className="auth-container">
           <div className="auth-header">
             <h1 className="app-title">EatFlex</h1>
@@ -388,6 +469,7 @@ function App() {
                 value={authForm.name}
                 onChange={(e) => setAuthForm({...authForm, name: e.target.value})}
                 required
+                className="w-full p-3 border border-gray-300 rounded-md focus:ring-green-500 focus:border-green-500"
               />
             )}
             
@@ -397,6 +479,7 @@ function App() {
               value={authForm.email}
               onChange={(e) => setAuthForm({...authForm, email: e.target.value})}
               required
+              className="w-full p-3 border border-gray-300 rounded-md focus:ring-green-500 focus:border-green-500"
             />
             
             <input
@@ -405,12 +488,14 @@ function App() {
               value={authForm.password}
               onChange={(e) => setAuthForm({...authForm, password: e.target.value})}
               required
+              className="w-full p-3 border border-gray-300 rounded-md focus:ring-green-500 focus:border-green-500"
             />
             
             {authMode === 'signup' && (
               <select
                 value={authForm.goal}
                 onChange={(e) => setAuthForm({...authForm, goal: e.target.value})}
+                className="w-full p-3 border border-gray-300 rounded-md focus:ring-green-500 focus:border-green-500"
               >
                 <option value="bulking">Bulking</option>
                 <option value="cutting">Cutting</option>
@@ -418,7 +503,7 @@ function App() {
               </select>
             )}
             
-            <button type="submit" disabled={loading} className="auth-button">
+            <button type="submit" disabled={loading} className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-md transition-colors">
               {loading ? 'Processing...' : (authMode === 'login' ? 'Login' : 'Sign Up')}
             </button>
             <button 
@@ -432,10 +517,10 @@ function App() {
                   alert('Health check success: ' + JSON.stringify(data));
                 } catch (error) {
                   console.error('Health check failed:', error);
-                  alert('Health check failed: ' + error.message);
+                  toast.error('Health check failed: ' + error.message);
                 }
               }}
-              className="auth-button"
+              className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-md transition-colors"
               style={{marginTop: '10px', backgroundColor: '#007bff'}}
             >
               Test API Connection
@@ -448,7 +533,7 @@ function App() {
 
   // Main App
   return (
-    <div className="app">
+    <div className="min-h-screen bg-gray-100 flex flex-col">
       <nav className="navbar">
         <div className="nav-brand">
           <h1>EatFlex</h1>
@@ -654,7 +739,7 @@ function App() {
                     accept="image/*"
                     onChange={(e) => setNewPost({...newPost, image: e.target.files[0]})}
                     id="post-image-upload"
-                    style={{ display: 'none' }}
+                    className="hidden"
                   />
                   <label htmlFor="post-image-upload" className="image-upload-label">
                     📷 {newPost.image ? 'Image selected' : 'Add Photo'}
@@ -675,14 +760,70 @@ function App() {
                   <div key={index} className="post-card">
                     <div className="post-header">
                       <h4>{post.author_name}</h4>
-                      <span className="post-time">
-                        {new Date(post.created_at).toLocaleDateString()}
-                      </span>
+                      <div className="post-header-right">
+                        <span className="post-time">
+                          {new Date(post.created_at).toLocaleDateString()}
+                        </span>
+                        {post.user_id === user.user_id && (
+                          <div className="post-options">
+                            <button 
+                              onClick={() => setEditingPost({ ...editingPost, [post.post_id]: post.content })}
+                              className="edit-button"
+                              title="Edit post"
+                            >
+                              ✏️
+                            </button>
+                            <button 
+                              onClick={() => handleDeletePost(post.post_id)}
+                              className="delete-button"
+                              title="Delete post"
+                            >
+                              🗑️
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </div>
                     <div className="post-content">
-                      <p>{post.content}</p>
-                      {post.image_url && (
-                        <img src={post.image_url} alt="Post" className="post-image" />
+                      {editingPost[post.post_id] !== undefined ? (
+                        <div className="edit-post-form">
+                          <textarea
+                            value={editingPost[post.post_id]}
+                            onChange={(e) => setEditingPost({ ...editingPost, [post.post_id]: e.target.value })}
+                            className="edit-post-input"
+                            rows="3"
+                          />
+                          <div className="edit-post-actions">
+                            <button 
+                              onClick={() => handleEditPost(post.post_id, editingPost[post.post_id])}
+                              className="save-button"
+                            >
+                              ✅ Save
+                            </button>
+                            <button 
+                              onClick={() => setEditingPost({ ...editingPost, [post.post_id]: undefined })}
+                              className="bg-gray-300 hover:bg-gray-400 text-gray-800 px-3 py-1 rounded-md text-sm transition-colors"
+                            >
+                              ❌ Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div>
+                          <p>{post.content}</p>
+                          {post.image_url && (
+                            <img 
+                              src={post.image_url} 
+                              alt="Post" 
+                              className="post-image"
+                              onClick={() => setSelectedImage(post.image_url)}
+                              onError={(e) => {
+                                e.target.style.display = 'none';
+                                console.log('Image failed to load:', post.image_url);
+                              }}
+                            />
+                          )}
+                        </div>
                       )}
                     </div>
                     <div className="post-actions">
@@ -706,10 +847,63 @@ function App() {
                         <div className="comments-list">
                           {post.comments?.map((comment, commentIndex) => (
                             <div key={commentIndex} className="comment">
-                              <strong>{comment.author_name}:</strong> {comment.content}
-                              <span className="comment-time">
-                                {new Date(comment.created_at).toLocaleTimeString()}
-                              </span>
+                              <div className="comment-header">
+                                <strong>{comment.author_name}</strong>
+                                <span className="comment-time">
+                                  {new Date(comment.created_at).toLocaleTimeString()}
+                                </span>
+                                {comment.user_id === user.user_id && (
+                                  <div className="comment-options">
+                                    <button 
+                                      onClick={() => setEditingComment({ ...editingComment, [comment.comment_id]: comment.content })}
+                                      className="edit-comment-button"
+                                      title="Edit comment"
+                                    >
+                                      ✏️
+                                    </button>
+                                    <button 
+                                      onClick={() => handleDeleteComment(post.post_id, comment.comment_id)}
+                                      className="delete-comment-button"
+                                      title="Delete comment"
+                                    >
+                                      🗑️
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                              <div className="comment-content">
+                                {editingComment[comment.comment_id] !== undefined ? (
+                                  <div className="edit-comment-form">
+                                    <input
+                                      type="text"
+                                      value={editingComment[comment.comment_id]}
+                                      onChange={(e) => setEditingComment({ ...editingComment, [comment.comment_id]: e.target.value })}
+                                      className="edit-comment-input"
+                                      onKeyPress={(e) => {
+                                        if (e.key === 'Enter') {
+                                          handleEditComment(post.post_id, comment.comment_id, editingComment[comment.comment_id]);
+                                        }
+                                      }}
+                                    />
+                                    <div className="edit-comment-actions">
+                                      <button 
+                                        onClick={() => handleEditComment(post.post_id, comment.comment_id, editingComment[comment.comment_id])}
+                                        className="save-comment-button"
+                                      >
+                                        ✅
+                                      </button>
+                                      <button 
+                                        onClick={() => setEditingComment({ ...editingComment, [comment.comment_id]: undefined })}
+                                        className="cancel-comment-button"
+                                      >
+                                        ❌
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <span>{comment.content}</span>
+                                )}
+                              </div>
                             </div>
                           ))}
                         </div>
@@ -801,16 +995,19 @@ function App() {
                     value={profileEdit.name}
                     onChange={(e) => setProfileEdit({...profileEdit, name: e.target.value})}
                     required
+                    className="w-full p-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                   />
                   <textarea
                     placeholder="Bio (optional)"
                     value={profileEdit.bio}
                     onChange={(e) => setProfileEdit({...profileEdit, bio: e.target.value})}
                     rows="3"
+                    className="w-full p-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                   />
                   <select
                     value={profileEdit.goal}
                     onChange={(e) => setProfileEdit({...profileEdit, goal: e.target.value})}
+                    className="w-full p-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                   >
                     <option value="bulking">Bulking</option>
                     <option value="cutting">Cutting</option>
@@ -824,24 +1021,28 @@ function App() {
                       placeholder="Calorie Goal"
                       value={profileEdit.daily_calorie_goal}
                       onChange={(e) => setProfileEdit({...profileEdit, daily_calorie_goal: e.target.value})}
+                      className="w-full p-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                     />
                     <input
                       type="number"
                       placeholder="Protein Goal (g)"
                       value={profileEdit.daily_protein_goal}
                       onChange={(e) => setProfileEdit({...profileEdit, daily_protein_goal: e.target.value})}
+                      className="w-full p-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                     />
                     <input
                       type="number"
                       placeholder="Carbs Goal (g)"
                       value={profileEdit.daily_carbs_goal}
                       onChange={(e) => setProfileEdit({...profileEdit, daily_carbs_goal: e.target.value})}
+                      className="w-full p-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                     />
                     <input
                       type="number"
                       placeholder="Fat Goal (g)"
                       value={profileEdit.daily_fat_goal}
                       onChange={(e) => setProfileEdit({...profileEdit, daily_fat_goal: e.target.value})}
+                      className="w-full p-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                     />
                   </div>
                   
@@ -851,7 +1052,7 @@ function App() {
                     </button>
                     <button 
                       type="button" 
-                      className="cancel-button" 
+                      className="bg-gray-300 hover:bg-gray-400 text-gray-800 px-3 py-1 rounded-md text-sm transition-colors" 
                       onClick={() => setIsEditingProfile(false)}
                     >
                       ❌ Cancel
@@ -863,6 +1064,8 @@ function App() {
           </div>
         )}
       </main>
+      <ImageModal imageUrl={selectedImage} onClose={() => setSelectedImage(null)} />
+      <ToastContainer />
     </div>
   );
 }
