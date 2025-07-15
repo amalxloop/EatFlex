@@ -88,7 +88,15 @@ frontend/build/
 frontend/package-lock.json
 backend/myenv/
 
+# Test files - DO NOT DEPLOY
+backend_test.py
+test_result.md
+*test*.html
+*test*.json
+
 # Environment files
+.env
+backend/.env
 .env.local
 .env.development.local
 .env.test.local

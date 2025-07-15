@@ -1,0 +1,24 @@
+{
+  "name": "eatflex",
+  "version": "1.0.0",
+  "description": "EatFlex is an AI-powered fitness and social nutrition web application designed to help users plan, track, and manage their meals flexibly. Built with a FastAPI Python backend and a modern React frontend, EatFlex provides a comprehensive social platform for nutrition tracking and community engagement.",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/amalxloop/EatFlex.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/amalxloop/EatFlex/issues"
+  },
+  "homepage": "https://github.com/amalxloop/EatFlex#readme"
+}

@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: eatflex-backend
+    runtime: python3
+    plan: free
+    buildCommand: "cd backend && pip install -r requirements.txt"
+    startCommand: "cd backend && python server.py"
+    envVars:
+      - key: JWT_SECRET
+        generateValue: true
+      - key: MONGO_URL
+        sync: false  # Set this manually in Render dashboard
+      - key: OPENROUTER_API_KEY
+        sync: false  # Set this manually in Render dashboard
+    healthCheckPath: "/api/health"
+    
+  - type: web
+    name: eatflex-frontend
+    runtime: static
+    plan: free
+    buildCommand: "cd frontend && npm install && npm run build"
+    staticPublishPath: "frontend/build"
+    envVars:
+      - key: REACT_APP_API_URL
+        value: "https://eatflex-backend.onrender.com"
+    routes:
+      - type: rewrite
+        source: "/*"
+        destination: "/index.html"
